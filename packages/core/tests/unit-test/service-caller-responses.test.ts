@@ -361,8 +361,15 @@ describe('Responses protocol', () => {
         stream,
         onChunk: rs.fn(),
       });
-      expect(result.usage).toBeUndefined();
-      expect(runtime.onUsage).not.toHaveBeenCalled();
+      expect(result.usage).toMatchObject({
+        api_protocol: 'responses',
+        model_name: config.modelName,
+        time_cost: expect.any(Number),
+      });
+      expect(result.usage?.total_tokens).toBeUndefined();
+      expect(result.usage?.prompt_tokens).toBeUndefined();
+      expect(result.usage?.completion_tokens).toBeUndefined();
+      expect(runtime.onUsage).toHaveBeenCalledExactlyOnceWith(result.usage);
     },
   );
 

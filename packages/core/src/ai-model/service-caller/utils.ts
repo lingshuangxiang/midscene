@@ -119,9 +119,7 @@ export const buildUsageInfo = ({
   responseModelName?: string;
   slot: ModelRuntime['config']['slot'];
   internalCallId: string;
-}): AIUsageInfo | undefined => {
-  if (!usageData) return undefined;
-
+}): AIUsageInfo => {
   const cachedInputTokens = (
     usageData as { prompt_tokens_details?: { cached_tokens?: number } }
   )?.prompt_tokens_details?.cached_tokens;
@@ -130,11 +128,13 @@ export const buildUsageInfo = ({
     ...usageData,
     api_protocol: apiProtocol,
     stream,
-    prompt_tokens: usageData.prompt_tokens ?? 0,
-    completion_tokens: usageData.completion_tokens ?? 0,
-    total_tokens: usageData.total_tokens ?? 0,
-    cached_input: cachedInputTokens ?? 0,
-    time_cost: timeCost ?? 0,
+    // Request metadata remains observable even when the provider omits usage.
+    // Missing token counts must stay unknown rather than becoming zero.
+    prompt_tokens: usageData?.prompt_tokens,
+    completion_tokens: usageData?.completion_tokens,
+    total_tokens: usageData?.total_tokens,
+    cached_input: usageData ? (cachedInputTokens ?? 0) : undefined,
+    time_cost: timeCost,
     total_time_cost: totalTimeCost,
     retry_count: retryCount,
     model_name: modelName,

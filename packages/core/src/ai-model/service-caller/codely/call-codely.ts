@@ -178,12 +178,14 @@ export async function callCodely(
       },
     });
     // ACP context_usage_update is context occupancy, not billable token usage.
+    // Use zero placeholders for unsupported per-request token counts in reports.
     return {
       content,
       reasoning_content: reasoning || undefined,
       isStreamed,
       timeCost,
       requestId: sessionId,
+      rawUsage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
     };
   } catch (error) {
     record({

@@ -20,6 +20,7 @@ import {
 } from '@/ai-model/service-caller/codely/messages';
 import { AIRequestTimeoutError } from '@/ai-model/service-caller/request-timeout';
 import type { ModelCallMessages } from '@/ai-model/service-caller/types';
+import { collectTestRunReportMetrics } from '@/test-runner/reporting/metrics';
 import { ModelConfigManager } from '@midscene/shared/env';
 import type { IModelConfig } from '@midscene/shared/env';
 import { afterEach, describe, expect, it, rs } from '@rstest/core';
@@ -266,13 +267,14 @@ describe.skipIf(process.platform === 'win32')(
         'ENOENT',
       );
     });
-    it('routes callAI through ACP, records protocol, streams, and does not invent usage', async () => {
+    it('routes callAI through ACP, records timing, and uses zero token placeholders', async () => {
       const fake = await server();
       const chunks: any[] = [];
       const onRequest = rs.fn();
+      const onUsage = rs.fn();
       const response = await callAI(
         messages,
-        { ...getModelRuntime(config), onRequest },
+        { ...getModelRuntime(config), onRequest, onUsage },
         {
           stream: true,
           onChunk: (chunk) => chunks.push(chunk),
@@ -280,7 +282,51 @@ describe.skipIf(process.platform === 'win32')(
       );
       expect(response.content).toBe('hello world');
       expect(response.reasoning_content).toBe('thinking');
-      expect(response.usage).toBeUndefined();
+      expect(response.usage).toMatchObject({
+        api_protocol: 'codely-acp',
+        model_name: 'codely-vl',
+        time_cost: expect.any(Number),
+        request_id: 's',
+        _midscene_call_id: expect.any(String),
+      });
+      expect(response.usage?.prompt_tokens).toBe(0);
+      expect(response.usage?.completion_tokens).toBe(0);
+      expect(response.usage?.total_tokens).toBe(0);
+      expect(response.usage?.cached_input).toBe(0);
+      expect(onUsage).toHaveBeenCalledExactlyOnceWith(response.usage);
+      expect(
+        collectTestRunReportMetrics({
+          executions: [
+            {
+              name: 'ACP',
+              logTime: 0,
+              tasks: [
+                {
+                  taskId: 'planning',
+                  type: 'Planning',
+                  status: 'finished',
+                  executor: async () => {},
+                  timing: { start: 0, callAiStart: 0 },
+                  usage: response.usage,
+                },
+              ],
+            },
+          ],
+        }),
+      ).toMatchObject({
+        modelCallCount: 1,
+        modelTimeMs: response.usage?.time_cost,
+        totalTokens: 0,
+        collection: {
+          status: 'complete',
+          fields: {
+            modelCallCount: 'complete',
+            modelTimeMs: 'complete',
+            totalTokens: 'complete',
+          },
+          reasons: [],
+        },
+      });
       expect(chunks.at(-1)).toMatchObject({
         accumulated: 'hello world',
         isComplete: true,

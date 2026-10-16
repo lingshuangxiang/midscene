@@ -154,8 +154,15 @@ describe('service-caller streaming usage', () => {
       });
       expect(result.content).toBe('Hello');
       expect(result.reasoning_content).toBe('');
-      expect(result.usage).toBeUndefined();
-      expect(onUsage).not.toHaveBeenCalled();
+      expect(result.usage).toMatchObject({
+        api_protocol: 'chat-completion',
+        model_name: modelConfig.modelName,
+        time_cost: expect.any(Number),
+      });
+      expect(result.usage?.total_tokens).toBeUndefined();
+      expect(result.usage?.prompt_tokens).toBeUndefined();
+      expect(result.usage?.completion_tokens).toBeUndefined();
+      expect(onUsage).toHaveBeenCalledExactlyOnceWith(result.usage);
       expect(onChunk.mock.calls.at(-1)?.[0]).toMatchObject({
         isComplete: true,
         usage: undefined,
