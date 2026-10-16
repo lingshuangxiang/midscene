@@ -8,8 +8,8 @@
 
 | 名称 | 描述 |
 |------|-------------|
-| `MIDSCENE_MODEL_API_KEY` | OpenAI 兼容 HTTP 服务需要的模型 API Key，如 "sk-abcd..."。当 `MIDSCENE_MODEL_BASE_URL="codex://app-server"` 时不需要，具体设置请参考[使用 Codex App Server](./chatgpt-subscription#use-codex-app-server-oauth-no-api-key) |
-| `MIDSCENE_MODEL_BASE_URL` | API 的接入 URL，常见以版本号结尾（如`/v1`）；不需要编写最后的 `/chat/completions` 或 `/responses` 部分，底层 SDK 会自动添加 |
+| `MIDSCENE_MODEL_API_KEY` | OpenAI 兼容 HTTP 服务需要的模型 API Key，如 "sk-abcd..."。[Codex App Server](./chatgpt-subscription#use-codex-app-server-oauth-no-api-key)（`codex://app-server`）和 [Codely ACP](./model-common-config#codely-acp)（`codely://acp`）不需要 |
+| `MIDSCENE_MODEL_BASE_URL` | API 的接入 URL，常见以版本号结尾（如`/v1`）；不需要编写最后的 `/chat/completions` 或 `/responses`。使用 `codex://app-server` 或 `codely://acp` 可选择本地 CLI 传输 |
 | `MIDSCENE_MODEL_NAME` | 模型名称 |
 | `MIDSCENE_MODEL_FAMILY` | 模型系列，用于确定坐标处理方式 |
 

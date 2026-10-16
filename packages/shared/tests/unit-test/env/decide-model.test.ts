@@ -11,6 +11,16 @@ const baseConfig = {
 };
 
 describe('decideModelConfigFromIntentConfig', () => {
+  it('accepts the Codely visual contract without an HTTP API key', () => {
+    const result = decideModelConfigFromIntentConfig('default', {
+      MIDSCENE_MODEL_BASE_URL: 'codely://acp',
+      MIDSCENE_MODEL_NAME: 'codely-vl',
+      MIDSCENE_MODEL_FAMILY: 'codely-vl',
+    })!;
+    expect(result.modelFamily).toBe('codely-vl');
+    expect(result.openaiBaseURL).toBe('codely://acp');
+    expect(result.openaiApiKey).toBeUndefined();
+  });
   it('returns undefined when model name missing', () => {
     expect(decideModelConfigFromIntentConfig('insight', {})).toBeUndefined();
   });

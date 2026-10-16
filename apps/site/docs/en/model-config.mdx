@@ -9,8 +9,8 @@ You need to set a default model for Midscene; see [Model strategy](./model-strat
 
 | Name | Description |
 |------|-------------|
-| `MIDSCENE_MODEL_API_KEY` | Model API key for OpenAI-compatible HTTP providers, e.g., `"sk-abcd..."`. Not required when `MIDSCENE_MODEL_BASE_URL="codex://app-server"`; see [Use Codex App Server](./chatgpt-subscription#use-codex-app-server-oauth-no-api-key) |
-| `MIDSCENE_MODEL_BASE_URL` | API endpoint URL, usually ending with a version (e.g., `/v1`); do not append `/chat/completions` or `/responses` here since the underlying sdk will add it automatically |
+| `MIDSCENE_MODEL_API_KEY` | Model API key for OpenAI-compatible HTTP providers, e.g., `"sk-abcd..."`. Not required for [Codex App Server](./chatgpt-subscription#use-codex-app-server-oauth-no-api-key) (`codex://app-server`) or [Codely ACP](./model-common-config#codely-acp) (`codely://acp`) |
+| `MIDSCENE_MODEL_BASE_URL` | API endpoint URL, usually ending with a version (e.g., `/v1`); do not append `/chat/completions` or `/responses`. Use `codex://app-server` or `codely://acp` to select a local CLI transport |
 | `MIDSCENE_MODEL_NAME` | Model name |
 | `MIDSCENE_MODEL_FAMILY` | Model family, determine the way of dealing with the coordinates |
 

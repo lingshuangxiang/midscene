@@ -11,11 +11,42 @@ import { ModelConfigCard, PackageManagerTabs } from '@theme';
 
 如需查询完整参数，请阅读[模型配置参考](./model-config)。
 
+## 复用 Codely CLI（ACP） {#codely-acp}
+
+如果已通过 Codely CLI 登录，可以在 Node.js 后端通过 ACP 复用登录状态，无需
+设置 `MIDSCENE_MODEL_API_KEY`：
+
+```bash
+export MIDSCENE_MODEL_BASE_URL="codely://acp"
+export MIDSCENE_MODEL_NAME="codely-vl"
+export MIDSCENE_MODEL_FAMILY="codely-vl"
+```
+
+请确保 `codely` 在 PATH 中可用且能正常调用模型。本接入已使用 macOS 上的
+Codely `1.0.0-rc.60` 验证，需要 ACP v1 和支持图片输入的主模型。不支持浏览器
+运行时；Windows 上 npm 生成的 `codely.cmd` 包装脚本无法通过此 provider 的
+无 Shell 子进程接口启动。
+
+`codely-vl` family 选择 Midscene 的标准视觉协议：0–1000 归一化边界框。
+它不表示 Codely 别名背后的模型供应商。如果改用其他 Codely 模型，请选择兼容的
+Midscene family，并验证其定位行为。
+
+Midscene 每次模型请求启动独立的 Codely 进程，提供系统提示词，再通过
+`session/prompt` 直接发送文本和图片。关闭内置工具、技能、Agent、hooks 和
+UPM；出现工具或权限请求时模型调用会失败。设备动作仍由 Midscene 执行。
+HTTP API Key、代理、额外请求体和协议配置不用于此传输。显式配置的思考开关和
+思考强度会传递给 Codely，是否支持取决于所选模型。
+
+此路径使用 Codely 的远端模型和账号额度，沿用 Midscene 的超时、取消、重试、
+流式回调和模型调用记录。ACP 的上下文占用不是每次请求的 token 用量，因此
+Midscene 不填充 token 用量。CLI 会增加进程启动开销，请针对实际任务评估耗时
+和稳定性。
+
 ## 支持的模型
 
 Midscene 支持使用这些多模态模型操作界面：[豆包 Seed](#doubao-seed-model)、[千问 Qwen](#qwen)、[DeepSeek](#deepseek)、[Google Gemini](#gemini)、[OpenAI GPT](#gpt)、[月之暗面 Kimi](#kimi)、[小米 MiMo](#xiaomi-mimo)、[智谱 GLM-V](#glm-v)，以及下文介绍的其他兼容模型 [AutoGLM](#auto-glm) 和 [UI-TARS](#ui-tars)。
 
-每份配置都需要 Base URL、API Key、模型名称和 `MIDSCENE_MODEL_FAMILY`。模型系列（`MIDSCENE_MODEL_FAMILY`）决定了 Midscene 如何适配所选模型。
+每份 HTTP 配置都需要 Base URL、API Key、模型名称和 `MIDSCENE_MODEL_FAMILY`。模型系列（`MIDSCENE_MODEL_FAMILY`）决定了 Midscene 如何适配所选模型。
 
 ### 豆包 Seed 系列 {#doubao-seed-model}
 

@@ -1,6 +1,11 @@
 import { getDebug } from '@midscene/shared/logger';
 import { assert, uuid } from '@midscene/shared/utils';
 import type { ModelRuntime } from '../models';
+import {
+  callCodely,
+  isCodelyACPProvider,
+  prepareCodelyCall,
+} from './codely/call-codely';
 import { callCodex, prepareCodexCall } from './codex/call-codex';
 import { isCodexAppServerProvider } from './codex/codex-app-server';
 import {
@@ -66,6 +71,9 @@ export async function callAI(
 
   const prepare = async (): Promise<PreparedModelInput> => {
     const input = { messages, modelRuntime, options };
+    if (isCodelyACPProvider(modelConfig.openaiBaseURL)) {
+      return { protocol: 'codely-acp', input: prepareCodelyCall(input) };
+    }
     if (isCodexAppServerProvider(modelConfig.openaiBaseURL)) {
       return { protocol: 'codex', input: prepareCodexCall(input) };
     }
@@ -136,6 +144,7 @@ export async function callAI(
 }
 
 type PreparedModelInput =
+  | { protocol: 'codely-acp'; input: ReturnType<typeof prepareCodelyCall> }
   | { protocol: 'codex'; input: ReturnType<typeof prepareCodexCall> }
   | PreparedOpenAIInput;
 
@@ -261,9 +270,11 @@ async function callModelOnce(
   };
   try {
     return await runWithAbortSignal(requestSignal, () =>
-      prepared.protocol === 'codex'
-        ? callCodex(context, prepared.input)
-        : callOpenAI(context, prepared),
+      prepared.protocol === 'codely-acp'
+        ? callCodely(context, prepared.input)
+        : prepared.protocol === 'codex'
+          ? callCodex(context, prepared.input)
+          : callOpenAI(context, prepared),
     );
   } catch (error) {
     options?.abortSignal?.throwIfAborted();

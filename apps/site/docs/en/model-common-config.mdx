@@ -11,11 +11,46 @@ The model configuration shown on this page consists of environment variables. Pr
 
 For complete parameter definitions, see [Model configuration reference](./model-config).
 
+## Reuse Codely CLI (ACP) {#codely-acp}
+
+If you have already signed in through Codely CLI, a Node.js backend can reuse
+that login over ACP without `MIDSCENE_MODEL_API_KEY`:
+
+```bash
+export MIDSCENE_MODEL_BASE_URL="codely://acp"
+export MIDSCENE_MODEL_NAME="codely-vl"
+export MIDSCENE_MODEL_FAMILY="codely-vl"
+```
+
+Ensure `codely` is on `PATH` and can make model requests. This integration was
+verified with Codely `1.0.0-rc.60` on macOS. It requires ACP v1 and a main model
+that accepts images. Browser runtimes are unsupported; on Windows, npm's
+`codely.cmd` shim cannot be launched by this provider's shell-free process API.
+
+The `codely-vl` family selects Midscene's standard visual contract: bounding
+boxes normalized to 0–1000. It does not identify the model vendor behind the
+Codely alias. If you choose a different Codely model, select a compatible
+Midscene family and verify its localization behavior.
+
+Midscene starts an isolated Codely process for each model request, supplies its
+system prompt, and sends text and images directly through `session/prompt`.
+Built-in tools, skills, agents, hooks, and UPM are disabled; tool or permission
+requests fail the model call. Midscene continues to own device actions. HTTP
+API keys, proxy settings, extra request bodies, and protocol settings do not
+configure this transport. Explicit reasoning-enabled and reasoning-effort
+settings are passed to Codely; support depends on its selected model.
+
+This route uses Codely's remote model access and account quota. Existing
+Midscene timeout, cancellation, retries, streaming callbacks, and model-call
+recording apply. ACP context occupancy is not per-request token usage, so
+Midscene leaves token usage unset. The CLI adds startup overhead; measure
+latency and reliability on your tasks before relying on this route.
+
 ## Supported models
 
 Midscene supports these multimodal models for operating user interfaces: [Doubao Seed](#doubao-seed-model), [Qwen](#qwen), [DeepSeek](#deepseek), [Google Gemini](#gemini), [OpenAI GPT](#gpt), [Moonshot Kimi](#kimi), [Xiaomi MiMo](#xiaomi-mimo), and [Zhipu GLM-V](#glm-v), as well as the other compatible models [AutoGLM](#auto-glm) and [UI-TARS](#ui-tars) described below.
 
-Each configuration requires a Base URL, API key, model name, and `MIDSCENE_MODEL_FAMILY`. The model family (`MIDSCENE_MODEL_FAMILY`) determines how Midscene adapts to the selected model.
+Each HTTP configuration requires a Base URL, API key, model name, and `MIDSCENE_MODEL_FAMILY`. The model family (`MIDSCENE_MODEL_FAMILY`) determines how Midscene adapts to the selected model.
 
 ### Doubao Seed Series {#doubao-seed-model}
 

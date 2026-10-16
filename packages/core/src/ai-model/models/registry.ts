@@ -19,6 +19,9 @@ import { qwenAdapters } from './qwen';
 import { uiTarsAdapters } from './ui-tars/adapter';
 
 export const MODEL_ADAPTER_CONFIGS = {
+  // A visual contract for Codely's model alias, not an assumption about its
+  // underlying model vendor. Uses the standard normalized-1000 bbox codec.
+  'codely-vl': {},
   ...qwenAdapters,
   ...deepSeekAdapters,
   ...doubaoAdapters,
