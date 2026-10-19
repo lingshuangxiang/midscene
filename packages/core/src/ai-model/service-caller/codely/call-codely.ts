@@ -1,10 +1,8 @@
-import { getDebug } from '@midscene/shared/logger';
 import { ifInBrowser, ifInWorker } from '@midscene/shared/utils';
 import type { ModelCallContext, ModelCallResult } from '../types';
-import { CodelyACPClient } from './acp-client';
 import { buildCodelyPrompt, normalizeCodelyMessages } from './messages';
-
-const warnCodely = getDebug('ai:call:codely', { console: true });
+import { CODELY_SESSION_SYSTEM_PROMPT, CodelySession } from './session';
+import { currentCodelySessionScope } from './session-scope';
 
 export function isCodelyACPProvider(baseURL?: string) {
   return baseURL?.trim().toLowerCase().startsWith('codely://') ?? false;
@@ -25,20 +23,31 @@ export function prepareCodelyCall({
 }
 
 export async function callCodely(
-  { modelRuntime, options, recordEvent, requestSignal }: ModelCallContext,
+  context: ModelCallContext,
   prepared: ReturnType<typeof prepareCodelyCall>,
 ): Promise<ModelCallResult> {
-  const fsModule = 'node:fs/promises';
-  const osModule = 'node:os';
-  const pathModule = 'node:path';
-  const [{ mkdir, mkdtemp, writeFile, rm }, { tmpdir }, path] =
-    await Promise.all([import(fsModule), import(osModule), import(pathModule)]);
+  const scope =
+    currentCodelySessionScope() ?? context.modelRuntime.codelySessionScope;
+  const run = (session: CodelySession) =>
+    callInSession(context, prepared, session, !!scope);
+  if (scope)
+    return scope.run(context.modelRuntime.config, context.requestSignal, run);
+  const session = new CodelySession();
+  try {
+    return await run(session);
+  } finally {
+    await session.close(context.requestSignal);
+  }
+}
+
+async function callInSession(
+  { modelRuntime, options, recordEvent, requestSignal }: ModelCallContext,
+  prepared: ReturnType<typeof prepareCodelyCall>,
+  session: CodelySession,
+  reused: boolean,
+): Promise<ModelCallResult> {
   requestSignal.throwIfAborted();
   const started = Date.now();
-  const workspace = await mkdtemp(path.join(tmpdir(), 'midscene-codely-'));
-  const { config } = modelRuntime;
-  let client: CodelyACPClient | undefined;
-  let sessionId: string | undefined;
   let content = '';
   let reasoning = '';
   let sequence = 0;
@@ -60,96 +69,43 @@ export async function callCodely(
   };
   try {
     const prompt = await buildCodelyPrompt(prepared.turns, requestSignal);
-    await mkdir(path.join(workspace, '.codely-cli'));
-    await writeFile(
-      path.join(workspace, '.codely-cli', 'settings.json'),
-      JSON.stringify({
-        coreTools: [],
-        mcpServers: {},
-        hooks: { enabled: false },
-        telemetry: { enabled: false },
-      }),
-    );
-    const systemPath = path.join(workspace, 'midscene-system.md');
-    await writeFile(systemPath, prepared.systemPrompt);
-    requestSignal.throwIfAborted();
-    const args = [
-      '--experimental-acp',
-      '--prewarm',
-      '--model',
-      config.modelName,
-      '--no-upm',
-      '--agents=false',
-      '--experimental-skills=false',
-      '--no-auto-edit-memory',
-      '--disable-next-speaker-check',
-      '--telemetry=false',
-      '--allowed-mcp-server-names=__midscene_no_mcp__',
-    ];
-    if (typeof config.reasoningEnabled === 'boolean')
-      args.push(`--enable_thinking=${config.reasoningEnabled}`);
-    if (config.reasoningEffort) {
-      const effort = config.reasoningEffort.trim().toLowerCase();
+    session.record = record;
+    session.onNotification = (message) => {
       if (
-        !['minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(effort)
-      ) {
-        throw new Error(`Unsupported Codely reasoning effort: ${effort}`);
+        message.params?.sessionId !== session.sessionId ||
+        requestSignal.aborted
+      )
+        return;
+      const update = message.params?.update;
+      if (
+        update?.content?.type !== 'text' ||
+        typeof update.content.text !== 'string'
+      )
+        return;
+      if (update.sessionUpdate === 'agent_message_chunk') {
+        content += update.content.text;
+        emit(update.content.text, '');
+      } else if (update.sessionUpdate === 'agent_thought_chunk') {
+        reasoning += update.content.text;
+        emit('', update.content.text);
       }
-      args.push('--reasoning_effort', effort);
-    }
-    client = await CodelyACPClient.start(
-      args,
-      workspace,
-      {
-        ...process.env,
-        CODELY_SYSTEM_MD: systemPath,
-        CODELY_ENABLE_VLM: '1',
-        CODELY_CLI_INTERNAL_DISABLE_AUTO_UPDATE: '1',
-      },
-      (message) => {
-        if (message.params?.sessionId !== sessionId || requestSignal.aborted)
-          return;
-        const update = message.params?.update;
-        if (
-          update?.content?.type !== 'text' ||
-          typeof update.content.text !== 'string'
-        )
-          return;
-        if (update.sessionUpdate === 'agent_message_chunk') {
-          content += update.content.text;
-          emit(update.content.text, '');
-        } else if (update.sessionUpdate === 'agent_thought_chunk') {
-          reasoning += update.content.text;
-          emit('', update.content.text);
-        }
-      },
-      record,
-    );
-    const handshake = await client.request(
-      'initialize',
-      {
-        protocolVersion: 1,
-        clientInfo: { name: 'midscene_codely_provider', version: '1.0.0' },
-        clientCapabilities: {},
-      },
+    };
+    await session.connect(
+      modelRuntime.config,
+      reused ? CODELY_SESSION_SYSTEM_PROMPT : prepared.systemPrompt,
       requestSignal,
-      15000,
     );
-    if (
-      handshake?.protocolVersion !== 1 ||
-      (prompt.some((part) => part.type === 'image') &&
-        handshake.agentCapabilities?.promptCapabilities?.image !== true)
-    ) {
+    if (prompt.some((part) => part.type === 'image') && !session.supportsImages)
       throw new Error('Codely ACP v1 with image support is required');
-    }
-    const session = await client.request(
-      'session/new',
-      { cwd: workspace, mcpServers: [] },
-      requestSignal,
-    );
-    sessionId = session?.sessionId;
-    if (!sessionId)
-      throw new Error('Codely ACP session/new returned no session id');
+    if (reused)
+      prompt.unshift({
+        type: 'text',
+        text: `CURRENT REQUEST\n[SYSTEM INSTRUCTIONS]\n${prepared.systemPrompt}\n[CONVERSATION]\n`,
+      });
+    const { client, sessionId } = session;
+    if (!client || !sessionId)
+      throw new Error('Codely session is not connected');
+    const requestId = `${sessionId}:${++session.promptSequence}`;
     const result = await client.request(
       'session/prompt',
       { sessionId, prompt },
@@ -184,7 +140,7 @@ export async function callCodely(
       reasoning_content: reasoning || undefined,
       isStreamed,
       timeCost,
-      requestId: sessionId,
+      requestId,
       rawUsage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
     };
   } catch (error) {
@@ -197,21 +153,7 @@ export async function callCodely(
     });
     throw error;
   } finally {
-    if (client) {
-      if (sessionId && requestSignal.aborted) {
-        try {
-          client.notify('session/cancel', { sessionId });
-        } catch {
-          /* Process may have exited. */
-        }
-      }
-      await client.close();
-    }
-    await rm(workspace, { recursive: true, force: true }).catch(
-      (error: unknown) =>
-        warnCodely(
-          `Failed to remove Codely temporary workspace: ${String(error)}`,
-        ),
-    );
+    session.onNotification = undefined;
+    session.record = undefined;
   }
 }

@@ -8,6 +8,7 @@ import type {
   TModelResponseFormat,
 } from '@midscene/shared/env';
 import type OpenAI from 'openai';
+import type { CodelySessionScope } from '../service-caller/codely/session-scope';
 import type {
   JsonParser,
   JsonParserContext,
@@ -325,6 +326,8 @@ export interface ModelAdapter {
 export interface ModelRuntime {
   config: IModelConfig;
   adapter: ModelAdapter;
+  /** @internal SDK Agent fallback; script execution supplies its own scope. */
+  codelySessionScope?: CodelySessionScope;
   /**
    * Report execution that owns this model runtime. It is carried on a
    * per-execution runtime copy so concurrent Agent operations never share it.

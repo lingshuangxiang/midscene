@@ -8,6 +8,7 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { Agent } from '@/agent';
 import { getModelRuntime } from '@/ai-model/models';
 import { callAI } from '@/ai-model/service-caller';
 import {
@@ -18,9 +19,14 @@ import {
   buildCodelyPrompt,
   normalizeCodelyMessages,
 } from '@/ai-model/service-caller/codely/messages';
+import {
+  CodelySessionScope,
+  runWithCodelySessionScope,
+} from '@/ai-model/service-caller/codely/session-scope';
 import { AIRequestTimeoutError } from '@/ai-model/service-caller/request-timeout';
 import type { ModelCallMessages } from '@/ai-model/service-caller/types';
 import { collectTestRunReportMetrics } from '@/test-runner/reporting/metrics';
+import { createLegacyYamlRuntime } from '@/yaml/legacy-yaml-runtime';
 import { ModelConfigManager } from '@midscene/shared/env';
 import type { IModelConfig } from '@midscene/shared/env';
 import { afterEach, describe, expect, it, rs } from '@rstest/core';
@@ -97,7 +103,8 @@ readline.on('line',line=>{
    fs.writeFileSync(path.join(${JSON.stringify(bin)},'retried'),'yes');
    return send({id:m.id,error:{code:-32000}});
   }
-  if(mode!=='empty') {update('agent_thought_chunk','thinking');update('agent_message_chunk','hello');update('agent_message_chunk',' world');}
+  if(mode==='extract') update('agent_message_chunk','<data-json>{"text":"hello"}</data-json>');
+  else if(mode!=='empty') {update('agent_thought_chunk','thinking');update('agent_message_chunk','hello');update('agent_message_chunk',' world');}
   send({method:'session/update',params:{sessionId:'s',update:{sessionUpdate:'context_usage_update',usedTokens:999,modelTokenLimit:10000}}});
   send({id:m.id,result:{stopReason:mode==='cancelled'?'cancelled':'end_turn'}});
  }
@@ -286,7 +293,7 @@ describe.skipIf(process.platform === 'win32')(
         api_protocol: 'codely-acp',
         model_name: 'codely-vl',
         time_cost: expect.any(Number),
-        request_id: 's',
+        request_id: 's:1',
         _midscene_call_id: expect.any(String),
       });
       expect(response.usage?.prompt_tokens).toBe(0);
@@ -396,33 +403,313 @@ describe.skipIf(process.platform === 'win32')(
       ).toEqual([1, 2]);
     });
 
-    it('cancels the active session and reaps the child on abort', async () => {
-      const fake = await server('hold');
-      const controller = new AbortController();
-      const pending = callAI(messages, getModelRuntime(config), {
-        abortSignal: controller.signal,
+    const requests = async (log: string) =>
+      (await readFile(log, 'utf8'))
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+
+    it('reuses one process/session across a script and isolates the next execution', async () => {
+      const fake = await server();
+      const runtime = createLegacyYamlRuntime({
+        agent: {
+          evaluateJavaScript: () => callAI(messages, getModelRuntime(config)),
+          dump: { executions: [] },
+        } as any,
+        actionSpace: [],
+        setResult: () => {},
       });
-      void pending.catch(() => {});
-      await waitFor(async () =>
-        (await readFile(fake.log, 'utf8')).includes('session/prompt'),
-      );
-      controller.abort(new Error('cancel test'));
-      await expect(pending).rejects.toThrow('cancel test');
-      await waitFor(
-        async () => (await readFile(fake.exited, 'utf8')) === 'done',
-      );
-      expect(await readFile(fake.log, 'utf8')).toContain('session/cancel');
+      const script = {
+        tasks: [
+          { name: 'first', flow: [{ javascript: 'first()' }] },
+          { name: 'second', flow: [{ javascript: 'second()' }] },
+        ],
+      };
+      for (let run = 1; run <= 2; run++) {
+        const result = await runtime.runScript(script);
+        expect(result.cases.map((item) => item.status)).toEqual([
+          'success',
+          'success',
+        ]);
+        const calls = await requests(fake.log);
+        expect(
+          calls.filter((item) => item.method === 'initialize'),
+        ).toHaveLength(run);
+        expect(
+          calls.filter((item) => item.method === 'session/new'),
+        ).toHaveLength(run);
+        expect(
+          calls.filter((item) => item.method === 'session/prompt'),
+        ).toHaveLength(run * 2);
+        const environment = JSON.parse(
+          await readFile(path.join(fake.bin, 'environment.json'), 'utf8'),
+        );
+        await expect(stat(environment.cwd)).rejects.toMatchObject({
+          code: 'ENOENT',
+        });
+      }
     });
 
-    it('enforces callAI hard timeout and cleans up its process', async () => {
-      const fake = await server('hold');
-      await expect(
-        callAI(messages, getModelRuntime({ ...config, timeout: 300 })),
-      ).rejects.toBeInstanceOf(AIRequestTimeoutError);
-      await waitFor(
-        async () => (await readFile(fake.exited, 'utf8')) === 'done',
-      );
+    it('uses current instructions and recording callbacks for each serialized prompt', async () => {
+      const fake = await server();
+      const firstChunks: any[] = [];
+      const secondChunks: any[] = [];
+      const onFirstRequest = rs.fn();
+      const onSecondRequest = rs.fn();
+      await runWithCodelySessionScope(async () => {
+        const [first, second] = await Promise.all([
+          callAI(
+            messages,
+            { ...getModelRuntime(config), onRequest: onFirstRequest },
+            {
+              stream: true,
+              onChunk: (chunk) => firstChunks.push(chunk),
+            },
+          ),
+          callAI(
+            [
+              { role: 'system', content: 'Return an assertion JSON' },
+              { role: 'user', content: 'Assert current screenshot' },
+            ],
+            { ...getModelRuntime(config), onRequest: onSecondRequest },
+            {
+              stream: true,
+              onChunk: (chunk) => secondChunks.push(chunk),
+            },
+          ),
+        ]);
+        expect(first.content).toBe('hello world');
+        expect(second.content).toBe('hello world');
+        expect(first.usage?.request_id).toBe('s:1');
+        expect(second.usage?.request_id).toBe('s:2');
+        expect(firstChunks.at(-1).accumulated).toBe('hello world');
+        expect(secondChunks.at(-1).accumulated).toBe('hello world');
+        expect(firstChunks).toHaveLength(secondChunks.length);
+        expect(onFirstRequest).toHaveBeenCalledTimes(1);
+        expect(onSecondRequest).toHaveBeenCalledTimes(1);
+        const calls = await requests(fake.log);
+        const prompts = calls.filter(
+          (item) => item.method === 'session/prompt',
+        );
+        expect(
+          calls.filter((item) => item.method === 'session/new'),
+        ).toHaveLength(1);
+        expect(prompts[0].params.prompt[0].text).toContain(
+          'Original system prompt',
+        );
+        expect(prompts[1].params.prompt[0].text).toContain(
+          'Return an assertion JSON',
+        );
+        expect(JSON.stringify(prompts[1])).not.toContain('Find: TapTap');
+        const responses = events.filter((event) => event.type === 'response');
+        expect(responses).toHaveLength(2);
+        expect(responses[0].callId).not.toBe(responses[1].callId);
+        await expect(stat(fake.exited)).rejects.toMatchObject({
+          code: 'ENOENT',
+        });
+      });
+      await expect(stat(fake.exited)).resolves.toBeDefined();
     });
+
+    it('keeps independent overlapping script executions isolated', async () => {
+      const fake = await server();
+      await Promise.all(
+        [1, 2].map(() =>
+          runWithCodelySessionScope(async () => {
+            await callAI(messages, getModelRuntime(config));
+            await callAI(messages, getModelRuntime(config));
+          }),
+        ),
+      );
+      const calls = await requests(fake.log);
+      expect(
+        calls.filter((item) => item.method === 'session/new'),
+      ).toHaveLength(2);
+      expect(
+        calls.filter((item) => item.method === 'session/prompt'),
+      ).toHaveLength(4);
+    });
+
+    it('reuses matching CLI settings and separates different models', async () => {
+      const fake = await server();
+      await runWithCodelySessionScope(async () => {
+        for (const modelName of ['codely-vl', 'other', 'codely-vl']) {
+          await callAI(messages, getModelRuntime({ ...config, modelName }));
+        }
+      });
+      const calls = await requests(fake.log);
+      expect(
+        calls.filter((item) => item.method === 'session/new'),
+      ).toHaveLength(2);
+      expect(
+        calls.filter((item) => item.method === 'session/prompt'),
+      ).toHaveLength(3);
+    });
+
+    it('evicts a failed session, retries, then reuses the recovered session', async () => {
+      const fake = await server('retry');
+      await runWithCodelySessionScope(async () => {
+        await callAI(
+          messages,
+          getModelRuntime({ ...config, retryCount: 1, retryInterval: 0 }),
+        );
+        await callAI(messages, getModelRuntime(config));
+      });
+      const calls = await requests(fake.log);
+      expect(
+        calls.filter((item) => item.method === 'session/new'),
+      ).toHaveLength(2);
+      expect(
+        calls.filter((item) => item.method === 'session/prompt'),
+      ).toHaveLength(3);
+    });
+
+    it('closes SDK-owned sessions explicitly and rejects calls after close', async () => {
+      const fake = await server();
+      const scope = new CodelySessionScope();
+      const runtime = { ...getModelRuntime(config), codelySessionScope: scope };
+      try {
+        await callAI(messages, runtime);
+        await callAI(messages, runtime);
+        expect(
+          (await requests(fake.log)).filter(
+            (item) => item.method === 'session/new',
+          ),
+        ).toHaveLength(1);
+      } finally {
+        await scope.close();
+      }
+      await expect(callAI(messages, runtime)).rejects.toThrow(
+        'scope is closed',
+      );
+      await expect(stat(fake.exited)).resolves.toBeDefined();
+    });
+
+    it('reuses sessions through Agent APIs, counts each inference, and closes on destroy', async () => {
+      const fake = await server('extract');
+      const destroy = rs.fn();
+      const agent = new Agent(
+        {
+          interfaceType: 'puppeteer',
+          actionSpace: () => [],
+          describe: () => 'test page',
+          size: async () => ({ width: 1, height: 1 }),
+          screenshotBase64: async () =>
+            'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=',
+          destroy,
+        } as any,
+        {
+          generateReport: false,
+          modelConfig: {
+            MIDSCENE_MODEL_NAME: 'codely-vl',
+            MIDSCENE_MODEL_FAMILY: 'codely-vl',
+            MIDSCENE_MODEL_BASE_URL: 'codely://acp',
+            MIDSCENE_MODEL_RETRY_COUNT: 0,
+          },
+        },
+      );
+      try {
+        for (let index = 0; index < 2; index++) {
+          expect(await agent.aiQuery('{text: string}')).toEqual({
+            text: 'hello',
+          });
+        }
+        expect(agent.metrics.calls).toBe(2);
+        expect(
+          (await requests(fake.log)).filter(
+            (item) => item.method === 'session/new',
+          ),
+        ).toHaveLength(1);
+        await expect(stat(fake.exited)).rejects.toMatchObject({
+          code: 'ENOENT',
+        });
+      } finally {
+        await agent.destroy();
+      }
+      expect(destroy).toHaveBeenCalledTimes(1);
+      await expect(stat(fake.exited)).resolves.toBeDefined();
+    });
+
+    it('does not submit an aborted queued inference or create another session', async () => {
+      const fake = await server('hold');
+      await runWithCodelySessionScope(async () => {
+        const active = new AbortController();
+        const queued = new AbortController();
+        const first = callAI(messages, getModelRuntime(config), {
+          abortSignal: active.signal,
+        });
+        void first.catch(() => {});
+        await waitFor(async () =>
+          (await readFile(fake.log, 'utf8')).includes('session/prompt'),
+        );
+        const second = callAI(messages, getModelRuntime(config), {
+          abortSignal: queued.signal,
+        });
+        queued.abort(new Error('queued cancelled'));
+        await expect(second).rejects.toThrow('queued cancelled');
+        active.abort(new Error('active cancelled'));
+        await expect(first).rejects.toThrow('active cancelled');
+      });
+      const calls = await requests(fake.log);
+      expect(
+        calls.filter((item) => item.method === 'session/new'),
+      ).toHaveLength(1);
+      expect(
+        calls.filter((item) => item.method === 'session/prompt'),
+      ).toHaveLength(1);
+    });
+
+    it('closes a reused session when the script throws', async () => {
+      const fake = await server();
+      await expect(
+        runWithCodelySessionScope(async () => {
+          await callAI(messages, getModelRuntime(config));
+          throw new Error('script failed');
+        }),
+      ).rejects.toThrow('script failed');
+      await expect(stat(fake.exited)).resolves.toBeDefined();
+    });
+
+    it.each([false, true])(
+      'cancels the active session and reaps the child on abort (scoped: %s)',
+      async (scoped) => {
+        const fake = await server('hold');
+        const controller = new AbortController();
+        const run = () =>
+          callAI(messages, getModelRuntime(config), {
+            abortSignal: controller.signal,
+          });
+        const pending = scoped ? runWithCodelySessionScope(run) : run();
+        void pending.catch(() => {});
+        await waitFor(async () =>
+          (await readFile(fake.log, 'utf8')).includes('session/prompt'),
+        );
+        controller.abort(new Error('cancel test'));
+        await expect(pending).rejects.toThrow('cancel test');
+        await waitFor(
+          async () => (await readFile(fake.exited, 'utf8')) === 'done',
+        );
+        expect(await readFile(fake.log, 'utf8')).toContain('session/cancel');
+      },
+    );
+
+    it.each([false, true])(
+      'enforces callAI hard timeout and cleans up its process (scoped: %s)',
+      async (scoped) => {
+        const fake = await server('hold');
+        // Allow the fake Node CLI to start before the inference times out, so
+        // its exit marker can prove cleanup even on a busy development machine.
+        const run = () =>
+          callAI(messages, getModelRuntime({ ...config, timeout: 2000 }));
+        await expect(
+          scoped ? runWithCodelySessionScope(run) : run(),
+        ).rejects.toBeInstanceOf(AIRequestTimeoutError);
+        await waitFor(
+          async () => (await readFile(fake.exited, 'utf8')) === 'done',
+        );
+        expect(await readFile(fake.log, 'utf8')).toContain('session/prompt');
+      },
+    );
 
     it('does not retry after a streaming consumer receives content and throws', async () => {
       const fake = await server();

@@ -32,8 +32,20 @@ boxes normalized to 0–1000. It does not identify the model vendor behind the
 Codely alias. If you choose a different Codely model, select a compatible
 Midscene family and verify its localization behavior.
 
-Midscene starts an isolated Codely process for each model request, supplies its
-system prompt, and sends text and images directly through `session/prompt`.
+Within one YAML script execution, Midscene reuses one Codely process and ACP
+session for each model/reasoning configuration. Separate script executions
+have separate sessions. In SDK scripts, calls on the same Agent reuse sessions
+until `await agent.destroy()`; always destroy the Agent in a `finally` block.
+Unscoped low-level model calls still use a temporary session per call.
+Concurrent requests within a scope are serialized. A failed or cancelled
+request discards its session, so a retry may create a replacement.
+
+Each `session/prompt` supplies the current task's instructions, conversation,
+text, and images. This lets planning, locating, and assertions share a session
+while specifying their own output formats. Earlier turns remain in Codely's
+context, so long scripts can consume more context; fewer sessions does not
+imply fewer inference requests or lower token usage.
+
 Built-in tools, skills, agents, hooks, and UPM are disabled; tool or permission
 requests fail the model call. Midscene continues to own device actions. HTTP
 API keys, proxy settings, extra request bodies, and protocol settings do not
@@ -43,8 +55,9 @@ settings are passed to Codely; support depends on its selected model.
 This route uses Codely's remote model access and account quota. Existing
 Midscene timeout, cancellation, retries, streaming callbacks, and model-call
 recording apply. ACP context occupancy is not per-request token usage, so
-Midscene leaves token usage unset. The CLI adds startup overhead; measure
-latency and reliability on your tasks before relying on this route.
+Midscene reports zero placeholders for token counts. Session reuse reduces
+CLI startup overhead; verify response formats, latency, and reliability on
+your tasks before relying on this route.
 
 ## Supported models
 

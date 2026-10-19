@@ -1,3 +1,4 @@
+import { runWithCodelySessionScope } from '../../ai-model/service-caller/codely/session-scope';
 import { isResourceRecoveryError } from '../errors';
 import type { CollectedCase, CollectedWorkflowDocument } from '../parser/types';
 import { buildTestRunReportPlan } from '../reporting/test-plan';
@@ -34,6 +35,15 @@ const asNotRun = (
 });
 
 export async function runWorkflowDocument<TContext = undefined>(
+  document: CollectedWorkflowDocument,
+  options: RunWorkflowDocumentOptions<TContext>,
+): Promise<WorkflowDocumentExecutionResult> {
+  return runWithCodelySessionScope(() =>
+    runWorkflowDocumentInScope(document, options),
+  );
+}
+
+async function runWorkflowDocumentInScope<TContext>(
   document: CollectedWorkflowDocument,
   options: RunWorkflowDocumentOptions<TContext>,
 ): Promise<WorkflowDocumentExecutionResult> {

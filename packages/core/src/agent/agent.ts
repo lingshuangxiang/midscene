@@ -1,5 +1,6 @@
 import { type ModelRuntime, getModelRuntime } from '@/ai-model/models';
 import { INTERNAL_CALL_ID_FIELD } from '@/ai-model/service-caller';
+import { CodelySessionScope } from '@/ai-model/service-caller/codely/session-scope';
 import { IS_REPORT_BUILD } from '@/constants';
 import yaml from 'js-yaml';
 import type { TUserPrompt } from '../ai-model/index';
@@ -207,6 +208,7 @@ export class Agent<InterfaceType extends AbstractInterface = AbstractInterface>
 
   reportFileName?: string;
   private readonly yamlReportScopeId = uuid();
+  private readonly codelySessionScope = new CodelySessionScope();
   private readonly yamlExecutionRecords: WorkflowExecutionRecord[] = [];
 
   /** @internal Runner snapshots retain immutable data and shared image files. */
@@ -451,6 +453,7 @@ export class Agent<InterfaceType extends AbstractInterface = AbstractInterface>
     );
     return {
       ...runtime,
+      codelySessionScope: this.codelySessionScope,
       onUsage: (usage) => {
         this.usageCallCounter += 1;
         // buildUsageInfo leaves intent undefined; fill it from the model
@@ -1869,6 +1872,8 @@ export class Agent<InterfaceType extends AbstractInterface = AbstractInterface>
     // Keep the public owner from disposing the interface until that call has
     // actually settled.
     await waitForResourceIdle(this);
+
+    await this.codelySessionScope.close();
 
     // Observers own observation frame files until explicitly disposed.
     for (const observer of this.ownedObservers) {
