@@ -310,7 +310,16 @@ export type LocateDefinition =
   | StandardLocateDefinition
   | CustomLocateDefinition;
 
+export type ModelTaskType =
+  | 'locate'
+  | 'boolean'
+  | 'extract'
+  | 'planning'
+  | 'general';
+
 export interface ModelAdapter {
+  modelType: 'generative' | 'system-one';
+  supportedTaskTypes?: readonly ModelTaskType[];
   supportedProtocols: TModelProtocol[];
   jsonParser: JsonParser;
   chatCompletion: ChatCompletionAdapter;
@@ -333,6 +342,12 @@ export interface ModelRuntime {
    * per-execution runtime copy so concurrent Agent operations never share it.
    */
   executionId?: string;
+  modelFallback?: {
+    requestedModel: string;
+    requestedSlot: IModelConfig['slot'];
+    taskType: ModelTaskType;
+    reason: string;
+  };
   /**
    * Optional callback fired after every underlying model call with the shaped
    * usage info. Provides a single collection point for callers that want to
@@ -345,6 +360,9 @@ export interface ModelRuntime {
 }
 
 export interface ModelAdapterDefinition {
+  /** Model category; defaults to generative. */
+  modelType?: ModelAdapter['modelType'];
+  supportedTaskTypes?: readonly ModelTaskType[];
   /** API protocols adapted for this model. Defaults to Chat Completions only. */
   supportedProtocols?: TModelProtocol[];
   jsonParser?: JsonParserPreset | JsonParser;

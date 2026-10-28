@@ -6,7 +6,7 @@ import {
 } from '@/ai-model/service-caller';
 import type { ModelCallMessages } from '@/ai-model/service-caller/types';
 import type { MessageContent } from '@/ai-model/service-caller/types';
-import { defaultModelFamilyRequiredForLocateMessage } from '@/ai-model/shared/model-locate-result/errors';
+import { modelFamilyRequiredForLocateMessage } from '@/ai-model/shared/model-locate-result/errors';
 import {
   AiLocateElement,
   AiLocateSection,
@@ -110,7 +110,7 @@ export default class Service {
     assert(queryPrompt, 'query is required for locate');
 
     if (!modelConfig.modelFamily) {
-      throw new Error(defaultModelFamilyRequiredForLocateMessage);
+      throw new Error(modelFamilyRequiredForLocateMessage(modelConfig.slot));
     }
 
     const context = opt?.context || (await this.contextRetrieverFn());
@@ -330,6 +330,7 @@ export default class Service {
   async extract<T>(
     dataDemand: ServiceExtractParam,
     modelRuntime: ModelRuntime,
+    taskType: 'boolean' | 'extract',
     opt?: ServiceExtractOption,
     pageDescription?: string,
     multimodalPrompt?: TMultimodalPrompt,
@@ -358,6 +359,7 @@ export default class Service {
       const result = await AiExtractElementInfo<T>({
         context,
         dataQuery: dataDemand,
+        taskType,
         multimodalPrompt,
         extractOption: opt,
         modelRuntime,

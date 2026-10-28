@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Agent } from '@/agent';
 import { getModelRuntime } from '@/ai-model/models';
-import { callAI } from '@/ai-model/service-caller';
+import { callGenerativeAI } from '@/ai-model/service-caller';
 import {
   isCodelyACPProvider,
   prepareCodelyCall,
@@ -270,16 +270,16 @@ describe.skipIf(process.platform === 'win32')(
   () => {
     it('reports a missing CLI as an ordinary model error without hanging', async () => {
       rs.stubEnv('PATH', await directory());
-      await expect(callAI(messages, getModelRuntime(config))).rejects.toThrow(
-        'ENOENT',
-      );
+      await expect(
+        callGenerativeAI(messages, getModelRuntime(config)),
+      ).rejects.toThrow('ENOENT');
     });
-    it('routes callAI through ACP, records timing, and uses zero token placeholders', async () => {
+    it('routes callGenerativeAI through ACP, records timing, and uses zero token placeholders', async () => {
       const fake = await server();
       const chunks: any[] = [];
       const onRequest = rs.fn();
       const onUsage = rs.fn();
-      const response = await callAI(
+      const response = await callGenerativeAI(
         messages,
         { ...getModelRuntime(config), onRequest, onUsage },
         {
@@ -290,7 +290,7 @@ describe.skipIf(process.platform === 'win32')(
       expect(response.content).toBe('hello world');
       expect(response.reasoning_content).toBe('thinking');
       expect(response.usage).toMatchObject({
-        api_protocol: 'codely-acp',
+        request_kind: 'codely-acp',
         model_name: 'codely-vl',
         time_cost: expect.any(Number),
         request_id: 's:1',
@@ -371,7 +371,7 @@ describe.skipIf(process.platform === 'win32')(
       async (mode) => {
         await server(mode);
         await expect(
-          callAI(messages, getModelRuntime(config)),
+          callGenerativeAI(messages, getModelRuntime(config)),
         ).rejects.toThrow();
         expect(JSON.stringify(events)).not.toContain(
           'secret-token-do-not-record',
@@ -383,7 +383,7 @@ describe.skipIf(process.platform === 'win32')(
       const fake = await server('retry');
       expect(
         (
-          await callAI(
+          await callGenerativeAI(
             messages,
             getModelRuntime({ ...config, retryCount: 1, retryInterval: 0 }),
           )
@@ -413,7 +413,8 @@ describe.skipIf(process.platform === 'win32')(
       const fake = await server();
       const runtime = createLegacyYamlRuntime({
         agent: {
-          evaluateJavaScript: () => callAI(messages, getModelRuntime(config)),
+          evaluateJavaScript: () =>
+            callGenerativeAI(messages, getModelRuntime(config)),
           dump: { executions: [] },
         } as any,
         actionSpace: [],
@@ -458,7 +459,7 @@ describe.skipIf(process.platform === 'win32')(
       const onSecondRequest = rs.fn();
       await runWithCodelySessionScope(async () => {
         const [first, second] = await Promise.all([
-          callAI(
+          callGenerativeAI(
             messages,
             { ...getModelRuntime(config), onRequest: onFirstRequest },
             {
@@ -466,7 +467,7 @@ describe.skipIf(process.platform === 'win32')(
               onChunk: (chunk) => firstChunks.push(chunk),
             },
           ),
-          callAI(
+          callGenerativeAI(
             [
               { role: 'system', content: 'Return an assertion JSON' },
               { role: 'user', content: 'Assert current screenshot' },
@@ -516,8 +517,8 @@ describe.skipIf(process.platform === 'win32')(
       await Promise.all(
         [1, 2].map(() =>
           runWithCodelySessionScope(async () => {
-            await callAI(messages, getModelRuntime(config));
-            await callAI(messages, getModelRuntime(config));
+            await callGenerativeAI(messages, getModelRuntime(config));
+            await callGenerativeAI(messages, getModelRuntime(config));
           }),
         ),
       );
@@ -534,7 +535,10 @@ describe.skipIf(process.platform === 'win32')(
       const fake = await server();
       await runWithCodelySessionScope(async () => {
         for (const modelName of ['codely-vl', 'other', 'codely-vl']) {
-          await callAI(messages, getModelRuntime({ ...config, modelName }));
+          await callGenerativeAI(
+            messages,
+            getModelRuntime({ ...config, modelName }),
+          );
         }
       });
       const calls = await requests(fake.log);
@@ -549,11 +553,11 @@ describe.skipIf(process.platform === 'win32')(
     it('evicts a failed session, retries, then reuses the recovered session', async () => {
       const fake = await server('retry');
       await runWithCodelySessionScope(async () => {
-        await callAI(
+        await callGenerativeAI(
           messages,
           getModelRuntime({ ...config, retryCount: 1, retryInterval: 0 }),
         );
-        await callAI(messages, getModelRuntime(config));
+        await callGenerativeAI(messages, getModelRuntime(config));
       });
       const calls = await requests(fake.log);
       expect(
@@ -569,8 +573,8 @@ describe.skipIf(process.platform === 'win32')(
       const scope = new CodelySessionScope();
       const runtime = { ...getModelRuntime(config), codelySessionScope: scope };
       try {
-        await callAI(messages, runtime);
-        await callAI(messages, runtime);
+        await callGenerativeAI(messages, runtime);
+        await callGenerativeAI(messages, runtime);
         expect(
           (await requests(fake.log)).filter(
             (item) => item.method === 'session/new',
@@ -579,7 +583,7 @@ describe.skipIf(process.platform === 'win32')(
       } finally {
         await scope.close();
       }
-      await expect(callAI(messages, runtime)).rejects.toThrow(
+      await expect(callGenerativeAI(messages, runtime)).rejects.toThrow(
         'scope is closed',
       );
       await expect(stat(fake.exited)).resolves.toBeDefined();
@@ -635,14 +639,14 @@ describe.skipIf(process.platform === 'win32')(
       await runWithCodelySessionScope(async () => {
         const active = new AbortController();
         const queued = new AbortController();
-        const first = callAI(messages, getModelRuntime(config), {
+        const first = callGenerativeAI(messages, getModelRuntime(config), {
           abortSignal: active.signal,
         });
         void first.catch(() => {});
         await waitFor(async () =>
           (await readFile(fake.log, 'utf8')).includes('session/prompt'),
         );
-        const second = callAI(messages, getModelRuntime(config), {
+        const second = callGenerativeAI(messages, getModelRuntime(config), {
           abortSignal: queued.signal,
         });
         queued.abort(new Error('queued cancelled'));
@@ -663,7 +667,7 @@ describe.skipIf(process.platform === 'win32')(
       const fake = await server();
       await expect(
         runWithCodelySessionScope(async () => {
-          await callAI(messages, getModelRuntime(config));
+          await callGenerativeAI(messages, getModelRuntime(config));
           throw new Error('script failed');
         }),
       ).rejects.toThrow('script failed');
@@ -676,7 +680,7 @@ describe.skipIf(process.platform === 'win32')(
         const fake = await server('hold');
         const controller = new AbortController();
         const run = () =>
-          callAI(messages, getModelRuntime(config), {
+          callGenerativeAI(messages, getModelRuntime(config), {
             abortSignal: controller.signal,
           });
         const pending = scoped ? runWithCodelySessionScope(run) : run();
@@ -694,13 +698,16 @@ describe.skipIf(process.platform === 'win32')(
     );
 
     it.each([false, true])(
-      'enforces callAI hard timeout and cleans up its process (scoped: %s)',
+      'enforces callGenerativeAI hard timeout and cleans up its process (scoped: %s)',
       async (scoped) => {
         const fake = await server('hold');
         // Allow the fake Node CLI to start before the inference times out, so
         // its exit marker can prove cleanup even on a busy development machine.
         const run = () =>
-          callAI(messages, getModelRuntime({ ...config, timeout: 2000 }));
+          callGenerativeAI(
+            messages,
+            getModelRuntime({ ...config, timeout: 2000 }),
+          );
         await expect(
           scoped ? runWithCodelySessionScope(run) : run(),
         ).rejects.toBeInstanceOf(AIRequestTimeoutError);
@@ -714,7 +721,7 @@ describe.skipIf(process.platform === 'win32')(
     it('does not retry after a streaming consumer receives content and throws', async () => {
       const fake = await server();
       await expect(
-        callAI(
+        callGenerativeAI(
           messages,
           getModelRuntime({ ...config, retryCount: 1, retryInterval: 0 }),
           {

@@ -13,6 +13,7 @@ import { doubaoAdapters } from './doubao';
 import { geminiAdapters } from './gemini';
 import { glmAdapters } from './glm';
 import { gptAdapters } from './gpt';
+import { jevAdapters } from './jev/adapter';
 import { kimiAdapters } from './kimi';
 import { mimoAdapters } from './mimo';
 import { qwenAdapters } from './qwen';
@@ -22,6 +23,7 @@ export const MODEL_ADAPTER_CONFIGS = {
   // A visual contract for Codely's model alias, not an assumption about its
   // underlying model vendor. Uses the standard normalized-1000 bbox codec.
   'codely-vl': {},
+  ...jevAdapters,
   ...qwenAdapters,
   ...deepSeekAdapters,
   ...doubaoAdapters,

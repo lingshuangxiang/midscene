@@ -19,7 +19,7 @@ export MIDSCENE_MODEL_FAMILY="codely-vl"
 ```
 
 `provider-smoke.mjs` 使用构建后的 core 入口和正常环境变量配置，验证流式
-`callAI` 与 `AiLocateElement`：
+`callGenerativeAI` 与 `AiLocateElement`：
 
 ```bash
 pnpm exec nx build @midscene/core

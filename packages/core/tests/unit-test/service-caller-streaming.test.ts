@@ -1,5 +1,5 @@
 import { getModelRuntime } from '@/ai-model/models';
-import { callAI } from '@/ai-model/service-caller';
+import { callGenerativeAI } from '@/ai-model/service-caller';
 import type { CodeGenerationChunk } from '@/types';
 import type { IModelConfig } from '@midscene/shared/env';
 import { beforeEach, describe, expect, it, rs } from '@rstest/core';
@@ -68,7 +68,7 @@ describe('service-caller streaming usage', () => {
     const onUsage = rs.fn(() => events.push('usage'));
     runtime.onUsage = onUsage;
     const chunks: CodeGenerationChunk[] = [];
-    const result = await callAI(messages, runtime, {
+    const result = await callGenerativeAI(messages, runtime, {
       stream: true,
       onChunk: (chunk) => {
         chunks.push(chunk);
@@ -84,7 +84,7 @@ describe('service-caller streaming usage', () => {
     expect(result.usage).toMatchObject(usage);
     expect(onUsage).toHaveBeenCalledWith(result.usage);
     expect(result.usage).toMatchObject({
-      api_protocol: 'chat-completion',
+      request_kind: 'chat-completion',
       slot: 'default',
       model_description: 'test',
     });
@@ -114,12 +114,16 @@ describe('service-caller streaming usage', () => {
           { controller: new AbortController() },
         ),
       );
-      const result = await callAI(messages, getModelRuntime(modelConfig), {
-        stream: true,
-        onChunk: (chunk) => {
-          if (chunk.isComplete) now.mockReturnValue(3000);
+      const result = await callGenerativeAI(
+        messages,
+        getModelRuntime(modelConfig),
+        {
+          stream: true,
+          onChunk: (chunk) => {
+            if (chunk.isComplete) now.mockReturnValue(3000);
+          },
         },
-      });
+      );
       expect(result.usage?.time_cost).toBe(2000);
     } finally {
       now.mockRestore();
@@ -144,18 +148,24 @@ describe('service-caller streaming usage', () => {
       const onChunk = rs.fn();
       if (!withFinish) {
         await expect(
-          callAI(messages, runtime, { stream: true, onChunk }),
+          callGenerativeAI(messages, runtime, {
+            stream: true,
+            onChunk,
+          }),
         ).rejects.toThrow('missing finish_reason');
         return;
       }
-      const result = await callAI(messages, runtime, { stream: true, onChunk });
+      const result = await callGenerativeAI(messages, runtime, {
+        stream: true,
+        onChunk,
+      });
       expect(mockCreate.mock.calls[0][0].stream_options).toEqual({
         include_usage: true,
       });
       expect(result.content).toBe('Hello');
       expect(result.reasoning_content).toBe('');
       expect(result.usage).toMatchObject({
-        api_protocol: 'chat-completion',
+        request_kind: 'chat-completion',
         model_name: modelConfig.modelName,
         time_cost: expect.any(Number),
       });
@@ -185,7 +195,7 @@ describe('service-caller streaming usage', () => {
     const onUsage = rs.fn();
     runtime.onUsage = onUsage;
     await expect(
-      callAI(messages, runtime, {
+      callGenerativeAI(messages, runtime, {
         stream: true,
         onChunk: (chunk) => {
           if (chunk.isComplete) throw new Error('completion callback failed');
@@ -211,7 +221,10 @@ describe('service-caller streaming usage', () => {
     runtime.onUsage = onUsage;
     const onChunk = rs.fn();
     await expect(
-      callAI(messages, runtime, { stream: true, onChunk }),
+      callGenerativeAI(messages, runtime, {
+        stream: true,
+        onChunk,
+      }),
     ).rejects.toThrow('stream interrupted');
     expect(onChunk.mock.calls.some(([chunk]) => chunk.isComplete)).toBe(false);
     expect(onUsage).not.toHaveBeenCalled();
@@ -243,7 +256,7 @@ describe('streaming retry boundaries', () => {
       ),
     );
     const onChunk = rs.fn();
-    const response = await callAI(messages, runtime(), {
+    const response = await callGenerativeAI(messages, runtime(), {
       stream: true,
       onChunk,
     });
@@ -262,7 +275,10 @@ describe('streaming retry boundaries', () => {
       ),
     );
     await expect(
-      callAI(messages, runtime(), { stream: true, onChunk: rs.fn() }),
+      callGenerativeAI(messages, runtime(), {
+        stream: true,
+        onChunk: rs.fn(),
+      }),
     ).rejects.toThrow('unavailable');
     expect(mockCreate).toHaveBeenCalledTimes(1);
   });
@@ -278,7 +294,7 @@ describe('streaming retry boundaries', () => {
       ),
     );
     await expect(
-      callAI(messages, runtime(), {
+      callGenerativeAI(messages, runtime(), {
         stream: true,
         onChunk: () => {
           throw httpError();
@@ -305,7 +321,10 @@ describe('streaming retry boundaries', () => {
       );
     });
     await expect(
-      callAI(messages, runtime(), { stream: true, onChunk: rs.fn() }),
+      callGenerativeAI(messages, runtime(), {
+        stream: true,
+        onChunk: rs.fn(),
+      }),
     ).rejects.toThrow('hard timeout');
     expect(signal?.aborted).toBe(true);
     expect(mockCreate).toHaveBeenCalledTimes(1);

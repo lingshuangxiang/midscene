@@ -12,7 +12,7 @@ const {
   ScreenshotItem,
 } = require('../../packages/core/dist/lib/index.js');
 const {
-  callAI,
+  callGenerativeAI,
   getModelRuntime,
 } = require('../../packages/core/dist/lib/ai-model/index.js');
 const {
@@ -44,7 +44,7 @@ try {
   const runtime = getModelRuntime(config);
   const started = Date.now();
   const chunks = [];
-  const text = await callAI(
+  const text = await callGenerativeAI(
     [
       {
         role: 'system',

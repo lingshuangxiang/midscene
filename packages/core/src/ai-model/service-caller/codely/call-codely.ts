@@ -1,5 +1,9 @@
 import { ifInBrowser, ifInWorker } from '@midscene/shared/utils';
-import type { ModelCallContext, ModelCallResult } from '../types';
+import type {
+  ModelCallContext,
+  ModelCallMessages,
+  ModelCallResult,
+} from '../types';
 import { buildCodelyPrompt, normalizeCodelyMessages } from './messages';
 import { CODELY_SESSION_SYSTEM_PROMPT, CodelySession } from './session';
 import { currentCodelySessionScope } from './session-scope';
@@ -11,7 +15,7 @@ export function isCodelyACPProvider(baseURL?: string) {
 export function prepareCodelyCall({
   messages,
   modelRuntime,
-}: Pick<ModelCallContext, 'messages' | 'modelRuntime'>) {
+}: Pick<ModelCallContext, 'modelRuntime'> & { messages: ModelCallMessages }) {
   if (ifInBrowser || ifInWorker)
     throw new Error('Codely ACP requires a Node.js runtime');
   if (

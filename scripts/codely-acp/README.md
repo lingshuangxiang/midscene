@@ -20,7 +20,7 @@ export MIDSCENE_MODEL_FAMILY="codely-vl"
 ```
 
 `provider-smoke.mjs` exercises the built core entry points and normal environment
-configuration, including streaming `callAI` and `AiLocateElement`:
+configuration, including streaming `callGenerativeAI` and `AiLocateElement`:
 
 ```bash
 pnpm exec nx build @midscene/core
