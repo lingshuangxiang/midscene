@@ -8,14 +8,15 @@ import {
 import * as path from 'node:path';
 import { z } from 'zod';
 import {
-  extractAllDumpScriptsSync,
-  extractTestRunReportDumpSync,
-} from './dump/html-utils';
+  readReportRunnerDump,
+  streamReportDumpScripts,
+} from './dump/report-artifact-reader';
 import { resolveScreenshotSource } from './dump/screenshot-store';
 import { deriveCaseStatus } from './dump/task-status';
 import {
   ReportMergingTool,
   collectDedupedExecutions,
+  exportReportArtifact,
   splitReportHtmlByExecution,
 } from './report';
 import { reportToMarkdown } from './report-markdown';
@@ -46,7 +47,11 @@ export interface ReportCliCommandEntry {
   def: ReportCliCommandDefinition;
 }
 
-export type ConsumeReportFileAction = 'split' | 'to-markdown' | 'merge-html';
+export type ConsumeReportFileAction =
+  | 'split'
+  | 'to-markdown'
+  | 'merge-html'
+  | 'export';
 
 export interface ConsumeReportFileOptions {
   htmlPath: string;
@@ -60,6 +65,7 @@ export interface MergeReportFilesOptions {
   htmlPaths: string[];
   outputDir?: string;
   outputName?: string;
+  outputFormat?: 'single-html' | 'html-and-external-assets';
   overwrite?: boolean;
 }
 
@@ -236,14 +242,15 @@ const FAILING_TEST_STATUSES: ReadonlySet<TestStatus> = new Set<TestStatus>([
  */
 function readSourceTestStatus(htmlPath: string): TestStatus | undefined {
   const recorded: TestStatus[] = [];
-  for (const { openTag } of extractAllDumpScriptsSync(htmlPath)) {
+  streamReportDumpScripts(htmlPath, ({ openTag }) => {
     const match = openTag.match(/playwright_test_status="([^"]*)"/);
-    if (!match) continue;
+    if (!match) return false;
     const status = decodeURIComponent(match[1]) as TestStatus;
     if (TEST_STATUS_VALUES.has(status)) {
       recorded.push(status);
     }
-  }
+    return false;
+  });
   if (recorded.length === 0) return undefined;
   return recorded.find((s) => FAILING_TEST_STATUSES.has(s)) ?? recorded[0];
 }
@@ -253,13 +260,13 @@ function deriveReportAttributesFromHtml(
   index: number,
 ): ReportFileAttributes {
   const fallbackId = `${path.basename(path.dirname(htmlPath)) || path.basename(htmlPath, path.extname(htmlPath))}-${index + 1}`;
-  const runnerDump = extractTestRunReportDumpSync(htmlPath);
+  const runnerDump = readReportRunnerDump(htmlPath);
+  const recordedStatus = readSourceTestStatus(htmlPath);
   try {
     const { baseDump, executions } = collectDedupedExecutions(htmlPath);
     // Prefer a status the source report already recorded (keeps Playwright's
     // precise timedOut/skipped/interrupted); otherwise infer it from the dump
     // so a failing case is not silently merged in as passed.
-    const recordedStatus = readSourceTestStatus(htmlPath);
     const testStatus =
       recordedStatus && FAILING_TEST_STATUSES.has(recordedStatus)
         ? recordedStatus
@@ -283,7 +290,12 @@ function deriveReportAttributesFromHtml(
       testTitle: fallbackId,
       testDescription: '',
       testDuration: 0,
-      testStatus: runnerDump?.status === 'failed' ? 'failed' : 'passed',
+      testStatus:
+        recordedStatus && FAILING_TEST_STATUSES.has(recordedStatus)
+          ? recordedStatus
+          : runnerDump?.status === 'failed'
+            ? 'failed'
+            : (recordedStatus ?? 'passed'),
     };
   }
 }
@@ -291,7 +303,13 @@ function deriveReportAttributesFromHtml(
 export function mergeReportFiles(
   options: MergeReportFilesOptions,
 ): MergeReportFilesResult {
-  const { htmlPaths, outputDir, outputName, overwrite = false } = options;
+  const {
+    htmlPaths,
+    outputDir,
+    outputName,
+    outputFormat,
+    overwrite = false,
+  } = options;
   if (!htmlPaths || htmlPaths.length === 0) {
     throw new Error('mergeReportFiles: htmlPaths is required');
   }
@@ -309,6 +327,7 @@ export function mergeReportFiles(
   const mergedReportPath = tool.mergeReports(outputName ?? 'AUTO', {
     overwrite,
     outputDir,
+    outputFormat,
   });
 
   if (!mergedReportPath) {
@@ -335,19 +354,19 @@ function normalizeHtmlReportArg(raw: unknown): string[] | undefined {
 const reportCommandDefinition: ReportCliCommandDefinition = {
   name: 'report-tool',
   description:
-    'Transform Midscene report artifacts, including splitting executions, converting to markdown, and merging multiple reports.',
+    'Transform Midscene report artifacts, including splitting executions, converting to markdown, merging multiple reports, and exporting portable reports in either storage format.',
   schema: {
     action: z
-      .enum(['split', 'to-markdown', 'merge-html'])
+      .enum(['split', 'to-markdown', 'merge-html', 'export'])
       .optional()
       .describe(
-        'Report action to run. Supports: split, to-markdown, merge-html. Defaults to split.',
+        'Report action to run. Supports: split, to-markdown, merge-html, export. Defaults to split.',
       ),
     htmlPath: z
       .string()
       .optional()
       .describe(
-        'Input report HTML path (e.g. ./report/index.html). Used by split and to-markdown.',
+        'Input report HTML path (e.g. ./report/index.html). Used by split, to-markdown, and export.',
       ),
     htmlReport: z
       .union([z.string(), z.array(z.string())])
@@ -365,13 +384,17 @@ const reportCommandDefinition: ReportCliCommandDefinition = {
       .string()
       .optional()
       .describe(
-        'Output report file/directory name (without .html) for the merge action. Defaults to an auto-generated name.',
+        'Output report file/directory name (without .html). Merge generates a name; export uses the input name by default.',
       ),
     overwrite: z
       .union([z.boolean(), z.string()])
       .optional()
+      .describe('Overwrite an existing output report for merge or export.'),
+    outputFormat: z
+      .enum(['single-html', 'html-and-external-assets'])
+      .optional()
       .describe(
-        'Overwrite the existing merged report file if present (merge action only).',
+        'Final delivery format for merge and export. Defaults to single-html.',
       ),
   },
   handler: async (args) => {
@@ -382,6 +405,7 @@ const reportCommandDefinition: ReportCliCommandDefinition = {
       outputDir,
       outputName,
       overwrite,
+      outputFormat,
     } = args as {
       action?: string;
       htmlPath?: string;
@@ -389,14 +413,16 @@ const reportCommandDefinition: ReportCliCommandDefinition = {
       outputDir?: string;
       outputName?: string;
       overwrite?: unknown;
+      outputFormat?: 'single-html' | 'html-and-external-assets';
     };
     if (
       action !== 'split' &&
       action !== 'to-markdown' &&
-      action !== 'merge-html'
+      action !== 'merge-html' &&
+      action !== 'export'
     ) {
       throw new Error(
-        `report-tool: unsupported --action value "${action}". Currently supported: split, to-markdown, merge-html`,
+        `report-tool: unsupported --action value "${action}". Currently supported: split, to-markdown, merge-html, export`,
       );
     }
 
@@ -415,6 +441,7 @@ const reportCommandDefinition: ReportCliCommandDefinition = {
         htmlPaths: paths,
         outputDir,
         outputName,
+        outputFormat,
         overwrite: overwriteFlag,
       });
 
@@ -435,6 +462,27 @@ const reportCommandDefinition: ReportCliCommandDefinition = {
 
     if (!outputDir) {
       throw new Error('report-tool: --outputDir is required');
+    }
+
+    if (action === 'export') {
+      const input = resolveReportHtmlPath(htmlPath);
+      const name =
+        outputName ??
+        (path.basename(input) === 'index.html'
+          ? path.basename(path.dirname(input))
+          : path.basename(input, '.html'));
+      const reportPath = await exportReportArtifact({
+        reportPath: input,
+        outputDir,
+        reportFileName: name,
+        outputFormat,
+        overwrite:
+          overwrite === true || overwrite === 'true' || overwrite === '1',
+      });
+      return {
+        isError: false,
+        content: [{ type: 'text', text: `Report exported to ${reportPath}` }],
+      };
     }
 
     if (action === 'to-markdown') {

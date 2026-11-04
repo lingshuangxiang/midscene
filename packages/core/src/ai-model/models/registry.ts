@@ -6,6 +6,7 @@ import type {
   ModelAdapterDefinition,
   ModelRuntime,
 } from '../model-adapter/types';
+import { antLingAdapters } from './ant-ling/adapter';
 import { autoGlmAdapters } from './auto-glm/adapter';
 import { deepSeekAdapters } from './deepseek/adapter';
 import { defaultOpenAICompatibleAdapterConfig } from './default';
@@ -23,6 +24,7 @@ export const MODEL_ADAPTER_CONFIGS = {
   // A visual contract for Codely's model alias, not an assumption about its
   // underlying model vendor. Uses the standard normalized-1000 bbox codec.
   'codely-vl': {},
+  ...antLingAdapters,
   ...jevAdapters,
   ...qwenAdapters,
   ...deepSeekAdapters,
