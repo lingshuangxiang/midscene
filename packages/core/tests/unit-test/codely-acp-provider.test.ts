@@ -599,7 +599,7 @@ describe.skipIf(process.platform === 'win32')(
           describe: () => 'test page',
           size: async () => ({ width: 1, height: 1 }),
           screenshotBase64: async () =>
-            'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=',
+            'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC',
           destroy,
         } as any,
         {
